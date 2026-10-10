@@ -102,6 +102,7 @@ private static Class[] getAllTestClasses() {
 
 		// Classpath and output location tests
 		ClasspathTests.class,
+		ClasspathLookupEquivalenceTests.class,
 
 		// Delta tests
 		JavaElementDeltaTests.class,

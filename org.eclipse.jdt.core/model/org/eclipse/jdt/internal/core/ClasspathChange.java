@@ -87,70 +87,119 @@ public class ClasspathChange {
 		IPath[] exclusionPatterns = entry.getExclusionPatterns();
 		IPath[] inclusionPatterns = entry.getInclusionPatterns();
 		int listLen = list == null ? 0 : list.length;
-		nextEntry: for (int i = 0; i < listLen; i++) {
-			IClasspathEntry other = list[i];
-			if (other.getContentKind() == entry.getContentKind()
-				&& other.getEntryKind() == entry.getEntryKind()
-				&& other.isExported() == entry.isExported()
-				&& other.getPath().equals(entry.getPath())) {
-					// check custom outputs
-					IPath entryOutput = entry.getOutputLocation();
-					IPath otherOutput = other.getOutputLocation();
-					if (entryOutput == null) {
-						if (otherOutput != null)
-							continue;
-					} else {
-						if (!entryOutput.equals(otherOutput))
-							continue;
-					}
-
-					// check inclusion patterns
-					IPath[] otherIncludes = other.getInclusionPatterns();
-					if (inclusionPatterns != otherIncludes) {
-					    if (inclusionPatterns == null) continue;
-						int includeLength = inclusionPatterns.length;
-						if (otherIncludes == null || otherIncludes.length != includeLength)
-							continue;
-						for (int j = 0; j < includeLength; j++) {
-							// compare toStrings instead of IPaths
-							// since IPath.equals is specified to ignore trailing separators
-							if (!inclusionPatterns[j].toString().equals(otherIncludes[j].toString()))
-								continue nextEntry;
-						}
-					}
-					// check exclusion patterns
-					IPath[] otherExcludes = other.getExclusionPatterns();
-					if (exclusionPatterns != otherExcludes) {
-					    if (exclusionPatterns == null) continue;
-						int excludeLength = exclusionPatterns.length;
-						if (otherExcludes == null || otherExcludes.length != excludeLength)
-							continue;
-						for (int j = 0; j < excludeLength; j++) {
-							// compare toStrings instead of IPaths
-							// since IPath.equals is specified to ignore trailing separators
-							if (!exclusionPatterns[j].toString().equals(otherExcludes[j].toString()))
-								continue nextEntry;
-						}
-					}
-					if (JavaCore.ENABLED.equals(this.project.getOption(JavaCore.COMPILER_ANNOTATION_NULL_ANALYSIS, true))) {
-						// if null annotations are enabled, also check for changes in external annotation attachment
-						String annotationPath = ClasspathEntry.getRawExternalAnnotationPath(entry);
-						String otherAnnotationPath = ClasspathEntry.getRawExternalAnnotationPath(other);
-						if (annotationPath != null && otherAnnotationPath != null) {
-							if (!annotationPath.equals(otherAnnotationPath))
-								continue;
-						} else if (annotationPath != otherAnnotationPath) {
-							continue; // null and not-null
-						}
-					}
-					if (((ClasspathEntry) entry).isModular() !=
-							((ClasspathEntry) other).isModular()) {
-						continue nextEntry;
-					}
-					return i;
+		for (int i = 0; i < listLen; i++) {
+			if (matchesEntry(entry, list[i], inclusionPatterns, exclusionPatterns)) {
+				return i;
 			}
 		}
 		return -1;
+	}
+
+	private boolean matchesEntry(IClasspathEntry entry, IClasspathEntry other, IPath[] inclusionPatterns, IPath[] exclusionPatterns) {
+		if (other.getContentKind() == entry.getContentKind()
+			&& other.getEntryKind() == entry.getEntryKind()
+			&& other.isExported() == entry.isExported()
+			&& other.getPath().equals(entry.getPath())) {
+				// check custom outputs
+				IPath entryOutput = entry.getOutputLocation();
+				IPath otherOutput = other.getOutputLocation();
+				if (entryOutput == null) {
+					if (otherOutput != null)
+						return false;
+				} else {
+					if (!entryOutput.equals(otherOutput))
+						return false;
+				}
+
+				// check inclusion patterns
+				IPath[] otherIncludes = other.getInclusionPatterns();
+				if (inclusionPatterns != otherIncludes) {
+				    if (inclusionPatterns == null) return false;
+					int includeLength = inclusionPatterns.length;
+					if (otherIncludes == null || otherIncludes.length != includeLength)
+						return false;
+					for (int j = 0; j < includeLength; j++) {
+						// compare toStrings instead of IPaths
+						// since IPath.equals is specified to ignore trailing separators
+						if (!inclusionPatterns[j].toString().equals(otherIncludes[j].toString()))
+							return false;
+					}
+				}
+				// check exclusion patterns
+				IPath[] otherExcludes = other.getExclusionPatterns();
+				if (exclusionPatterns != otherExcludes) {
+				    if (exclusionPatterns == null) return false;
+					int excludeLength = exclusionPatterns.length;
+					if (otherExcludes == null || otherExcludes.length != excludeLength)
+						return false;
+					for (int j = 0; j < excludeLength; j++) {
+						// compare toStrings instead of IPaths
+						// since IPath.equals is specified to ignore trailing separators
+						if (!exclusionPatterns[j].toString().equals(otherExcludes[j].toString()))
+							return false;
+					}
+				}
+				if (JavaCore.ENABLED.equals(this.project.getOption(JavaCore.COMPILER_ANNOTATION_NULL_ANALYSIS, true))) {
+					// if null annotations are enabled, also check for changes in external annotation attachment
+					String annotationPath = ClasspathEntry.getRawExternalAnnotationPath(entry);
+					String otherAnnotationPath = ClasspathEntry.getRawExternalAnnotationPath(other);
+					if (annotationPath != null && otherAnnotationPath != null) {
+						if (!annotationPath.equals(otherAnnotationPath))
+							return false;
+					} else if (annotationPath != otherAnnotationPath) {
+						return false; // null and not-null
+					}
+				}
+				if (((ClasspathEntry) entry).isModular() !=
+						((ClasspathEntry) other).isModular()) {
+					return false;
+				}
+				return true;
+		}
+		return false;
+	}
+
+	/**
+	 * Path-keyed lookup over a resolved classpath, so per-entry containment
+	 * checks over large classpaths are O(bucket) instead of O(n). The path is
+	 * only a candidate prefilter; {@link #matchesEntry} decides, so the match
+	 * semantics (which are looser than {@code ClasspathEntry.equals}) are
+	 * exactly those of the linear {@link #classpathContains} scan, including
+	 * first-match ordering (buckets preserve array order).
+	 */
+	private class ClasspathLookup {
+		private final IClasspathEntry[] list;
+		private final HashMap<IPath, List<Integer>> byPath = new HashMap<>();
+
+		ClasspathLookup(IClasspathEntry[] list) {
+			this.list = list;
+			int len = list == null ? 0 : list.length;
+			for (int i = 0; i < len; i++) {
+				this.byPath.computeIfAbsent(list[i].getPath(), p -> new ArrayList<>(1)).add(i);
+			}
+		}
+
+		/** Same contract as {@code classpathContains(this.list, entry)}. */
+		int indexOf(IClasspathEntry entry) {
+			List<Integer> bucket = this.byPath.get(entry.getPath());
+			if (bucket == null) {
+				return -1;
+			}
+			IPath[] exclusionPatterns = entry.getExclusionPatterns();
+			IPath[] inclusionPatterns = entry.getInclusionPatterns();
+			for (int i : bucket) {
+				if (matchesEntry(entry, this.list[i], inclusionPatterns, exclusionPatterns)) {
+					return i;
+				}
+			}
+			return -1;
+		}
+
+		/** First entry whose path equals the given path, or {@code null}. */
+		IClasspathEntry firstWithPath(IPath path) {
+			List<Integer> bucket = this.byPath.get(path);
+			return bucket == null ? null : this.list[bucket.get(0)];
+		}
 	}
 
 	/*
@@ -316,8 +365,10 @@ public class ClasspathChange {
 
 		int newLength = newResolvedClasspath.length;
 		int oldLength = this.oldResolvedClasspath.length;
+		ClasspathLookup newLookup = new ClasspathLookup(newResolvedClasspath);
+		ClasspathLookup oldLookup = new ClasspathLookup(this.oldResolvedClasspath);
 		for (int i = 0; i < oldLength; i++) {
-			int index = classpathContains(newResolvedClasspath, this.oldResolvedClasspath[i]);
+			int index = newLookup.indexOf(this.oldResolvedClasspath[i]);
 			if (index == -1) {
 				// remote project changes
 				int entryKind = this.oldResolvedClasspath[i].getEntryKind();
@@ -418,7 +469,7 @@ public class ClasspathChange {
 		}
 
 		for (int i = 0; i < newLength; i++) {
-			int index = classpathContains(this.oldResolvedClasspath, newResolvedClasspath[i]);
+			int index = oldLookup.indexOf(newResolvedClasspath[i]);
 			if (index == -1) {
 				// remote project changes
 				int entryKind = newResolvedClasspath[i].getEntryKind();
@@ -509,8 +560,10 @@ public class ClasspathChange {
 
 		int newLength = newResolvedClasspath.length;
 		int oldLength = this.oldResolvedClasspath == null ? 0 : this.oldResolvedClasspath.length;
+		ClasspathLookup newLookup = new ClasspathLookup(newResolvedClasspath);
+		ClasspathLookup oldLookup = new ClasspathLookup(this.oldResolvedClasspath);
 		for (int i = 0; i < oldLength; i++) {
-			int index = classpathContains(newResolvedClasspath, this.oldResolvedClasspath[i]);
+			int index = newLookup.indexOf(this.oldResolvedClasspath[i]);
 			if (index == -1) {
 				// remote projects are not indexed in this project
 				if (this.oldResolvedClasspath[i].getEntryKind() == IClasspathEntry.CPE_PROJECT){
@@ -540,7 +593,7 @@ public class ClasspathChange {
 		}
 
 		for (int i = 0; i < newLength; i++) {
-			int index = classpathContains(this.oldResolvedClasspath, newResolvedClasspath[i]);
+			int index = oldLookup.indexOf(newResolvedClasspath[i]);
 			if (index == -1 || newResolvedClasspath[i].getEntryKind() == IClasspathEntry.CPE_LIBRARY) {
 				// remote projects are not indexed in this project
 				if (newResolvedClasspath[i].getEntryKind() == IClasspathEntry.CPE_PROJECT){
@@ -554,22 +607,19 @@ public class ClasspathChange {
 					case IClasspathEntry.CPE_LIBRARY:
 						boolean pathHasChanged = true;
 						IPath newPath = newResolvedClasspath[i].getPath();
-						for (int j = 0; j < oldLength; j++) {
-							IClasspathEntry oldEntry = this.oldResolvedClasspath[j];
-							if (oldEntry.getPath().equals(newPath)) {
-								URL oldurl = ((ClasspathEntry)oldEntry).getLibraryIndexLocation();
-								if (oldurl == null && newurl == null) {
-									pathHasChanged = false;
-								} else if (oldurl != null && newurl != null) {
-									try {
-										pathHasChanged = !Objects.equals(newurl.toURI(),oldurl.toURI());
-									} catch (URISyntaxException e) {
-										pathHasChanged = !Objects.equals(newurl, oldurl);
-									}
-								} else if (oldurl != null) {
-									indexManager.removeIndex(newPath);
+						IClasspathEntry oldEntry = oldLookup.firstWithPath(newPath);
+						if (oldEntry != null) {
+							URL oldurl = ((ClasspathEntry)oldEntry).getLibraryIndexLocation();
+							if (oldurl == null && newurl == null) {
+								pathHasChanged = false;
+							} else if (oldurl != null && newurl != null) {
+								try {
+									pathHasChanged = !Objects.equals(newurl.toURI(),oldurl.toURI());
+								} catch (URISyntaxException e) {
+									pathHasChanged = !Objects.equals(newurl, oldurl);
 								}
-								break;
+							} else if (oldurl != null) {
+								indexManager.removeIndex(newPath);
 							}
 						}
 						if (pathHasChanged) {
