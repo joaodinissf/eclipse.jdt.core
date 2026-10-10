@@ -19,7 +19,11 @@ package org.eclipse.jdt.internal.core;
 import static org.eclipse.jdt.internal.core.JavaModelManager.trace;
 
 import java.io.File;
+import java.io.IOException;
 import java.net.URL;
+import java.nio.file.Files;
+import java.nio.file.InvalidPathException;
+import java.nio.file.attribute.BasicFileAttributes;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.HashMap;
@@ -224,10 +228,18 @@ public class DeltaProcessor {
 
 	/*
 	 * Answer a combination of the lastModified stamp and the size.
-	 * Used for detecting external JAR changes
+	 * Used for detecting external JAR changes. Both attributes come from one
+	 * attribute query; the value is persisted, so the formula must not change.
 	 */
 	public static long getTimeStamp(File file) {
-		return file.lastModified() + Long.hashCode(file.length()) * 31;
+		try {
+			BasicFileAttributes attributes = Files.readAttributes(file.toPath(), BasicFileAttributes.class);
+			return attributes.lastModifiedTime().toMillis() + Long.hashCode(attributes.size()) * 31;
+		} catch (IOException e) {
+			return 0;
+		} catch (InvalidPathException e) {
+			return file.lastModified() + Long.hashCode(file.length()) * 31;
+		}
 	}
 
 	/*

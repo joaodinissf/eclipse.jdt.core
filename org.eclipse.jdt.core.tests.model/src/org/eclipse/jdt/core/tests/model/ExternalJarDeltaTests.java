@@ -25,6 +25,8 @@ import org.eclipse.jdt.core.IJavaElement;
 import org.eclipse.jdt.core.IJavaProject;
 import org.eclipse.jdt.core.IPackageFragmentRoot;
 import org.eclipse.jdt.core.JavaCore;
+import org.eclipse.jdt.core.tests.util.Util;
+import org.eclipse.jdt.internal.core.DeltaProcessor;
 /**
  * These test ensure that modifications in external jar are correctly reported as
  * IJavaEllementDeltas after a JavaModel#refreshExternalArchives().
@@ -554,6 +556,21 @@ public void testExternalJarInternalExternalJar() throws CoreException, IOExcepti
 		this.deleteProject("P");
 		stopDeltas();
 	}
+}
+/*
+ * Ensures that the external archive timestamp keeps its persisted formula:
+ * lastModified + Long.hashCode(length) * 31, and 0 for a missing file.
+ */
+public void testExternalArchiveTimeStamp() {
+	File f = new File(getExternalPath() + "timestamp.jar");
+	try {
+		Util.writeToFile("some content", f.getAbsolutePath());
+		assertEquals("Unexpected timestamp", f.lastModified() + Long.hashCode(f.length()) * 31, DeltaProcessor.getTimeStamp(f));
+		assertTrue("File should not be empty", f.length() > 0);
+	} finally {
+		f.delete();
+	}
+	assertEquals("Unexpected timestamp for a missing file", 0, DeltaProcessor.getTimeStamp(f));
 }
 }
 
